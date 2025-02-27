@@ -6,6 +6,7 @@ async function toggleReflection() {
     const promptInput = document.getElementById("initialPrompt");
     const logBox = document.getElementById("log");
     const button = document.getElementById("toggleButton");
+    const imagesBox = document.getElementById("images");
 
     if (!isRunning) {
         const prompt = promptInput.value.trim();
@@ -27,7 +28,10 @@ async function toggleReflection() {
             button.textContent = "Stop";
             isRunning = true;
 
-            // Start listening for new images
+            // **Clear previously displayed image**
+            imagesBox.innerHTML = "";
+
+            // **Start listening for new images**
             listenForNewImages();
         } catch (error) {
             console.error("Error:", error);
@@ -43,7 +47,7 @@ async function toggleReflection() {
             button.textContent = "Start";
             isRunning = false;
 
-            // Stop listening for new images
+            // **Stop listening for new images**
             if (eventSource) {
                 eventSource.close();
             }
@@ -54,7 +58,8 @@ async function toggleReflection() {
     }
 }
 
-// **Listen for new images from the server using Server-Sent Events (SSE)**
+
+// **Listen for new images from the server using SSE**
 function listenForNewImages() {
     const imagesBox = document.getElementById("images");
 
@@ -64,8 +69,11 @@ function listenForNewImages() {
         const newImage = event.data;
         console.log("New image received:", newImage);
 
-        // Update image display
-        imagesBox.innerHTML = `<img src="${newImage}" alt="Generated Image" style="max-width: 100%; border-radius: 10px; margin-top: 10px;">`;
+        // Append a timestamp to force image refresh
+        const imageSrc = `${newImage}?t=${new Date().getTime()}`;
+
+        // Update the image display
+        imagesBox.innerHTML = `<img src="${imageSrc}" alt="Generated Image" style="max-width: 100%; border-radius: 10px; margin-top: 10px;">`;
     };
 
     eventSource.onerror = function () {
@@ -73,3 +81,4 @@ function listenForNewImages() {
         eventSource.close();
     };
 }
+
