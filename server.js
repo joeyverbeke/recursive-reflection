@@ -1,6 +1,7 @@
 const express = require("express");
 const axios = require("axios");
 const fs = require("fs");
+const path = require("path");
 const dotenv = require("dotenv");
 
 dotenv.config();
@@ -12,13 +13,14 @@ app.use(express.static("public"));
 const OLLAMA_URL = "http://localhost:11434/api/generate"; // Ollama API for DeepSeek & LLaVA
 const STABLE_DIFFUSION_URL = "http://127.0.0.1:7860/sdapi/v1/txt2img"; // Stable Diffusion API
 
-const MODEL_LLM = "deepseek-r1:8b-llama-distill-q4_K_M"; // Reasoning model
+const MODEL_LLM = "deepseek-r1:8b-llama-distill-q4_K_M"; // Correct DeepSeek model
 const MODEL_LLaVA = "llava"; // Multimodal model
 
 let running = false;
 let iteration = 0;
+const clients = []; // Store connected clients for SSE
 
-// Function to generate a Stable Diffusion prompt using DeepSeek
+// **Function to generate reflection using DeepSeek**
 async function generateReflection(prompt) {
     try {
         console.log(`Iteration ${iteration}: Generating reflection with DeepSeek...`);
@@ -37,7 +39,7 @@ async function generateReflection(prompt) {
     }
 }
 
-// Function to generate an image using Stable Diffusion
+// **Function to generate an image using Stable Diffusion**
 async function generateImage(prompt) {
     try {
         console.log(`Iteration ${iteration}: Generating image from Stable Diffusion...`);
@@ -71,7 +73,7 @@ async function generateImage(prompt) {
     }
 }
 
-// Function to analyze an image using LLaVA
+// **Function to analyze an image using LLaVA**
 async function analyzeImage(imagePath) {
     try {
         console.log(`Iteration ${iteration}: Analyzing image with LLaVA...`);
@@ -80,15 +82,14 @@ async function analyzeImage(imagePath) {
         const imageBuffer = fs.readFileSync(`public${imagePath}`);
         const imageBase64 = imageBuffer.toString("base64");
 
-        // Send request to LLaVA with proper JSON structure
+        // Send request to LLaVA
         const payload = {
             model: MODEL_LLaVA,
             prompt: "Describe this image in detail. Identify patterns, themes, or anomalies.",
-            images: [imageBase64], // LLaVA supports an array of images
+            images: [imageBase64], // Corrected image format
             stream: false,
         };
 
-        // Send request to LLaVA
         const response = await axios.post(OLLAMA_URL, payload, {
             headers: { "Content-Type": "application/json" },
         });
@@ -139,10 +140,11 @@ app.post("/start", async (req, res) => {
         return res.json({ message: "Reflection is already running." });
     }
 
-    console.log("Starting infinite reflection loop...");
+    console.log("🟢 Starting infinite reflection loop...");
     running = true;
     iteration = 0;
-    
+
+    clearOldImages(); // Delete old images before starting a new session
     processIteration(prompt);
 
     res.json({ message: "Infinite reflection started." });
@@ -151,26 +153,50 @@ app.post("/start", async (req, res) => {
 // **Stop the loop**
 app.post("/stop", (req, res) => {
     running = false;
-    console.log("Infinite reflection loop stopped.");
+    console.log("🛑 Infinite reflection loop stopped.");
     res.json({ message: "Infinite reflection stopped." });
 });
 
-// **Serve images correctly**
-app.use("/images", express.static("public/images"));
-
-// **API to fetch the latest images**
-app.get("/generated_images", (req, res) => {
+// **Function to clear all old images when a new session starts**
+function clearOldImages() {
     const imageDir = "public/images";
-    
-    if (!fs.existsSync(imageDir)) {
-        return res.json([]);
+
+    if (fs.existsSync(imageDir)) {
+        fs.readdirSync(imageDir).forEach(file => {
+            if (file.startsWith("generated_") && file.endsWith(".png")) {
+                fs.unlinkSync(path.join(imageDir, file)); // Delete each image
+            }
+        });
+        console.log("🗑️ Cleared old images before starting new session.");
     }
+}
 
-    const imagePaths = fs.readdirSync(imageDir)
-        .filter(file => file.startsWith("generated_") && file.endsWith(".png"))
-        .map(file => `/images/${file}`);
+// **Watch for new images in the /public/images/ directory**
+if (!fs.existsSync("public/images")) {
+    fs.mkdirSync("public/images", { recursive: true });
+}
 
-    res.json(imagePaths);
+fs.watch("public/images", (eventType, filename) => {
+    if (eventType === "rename" && filename.startsWith("generated_") && filename.endsWith(".png")) {
+        const imagePath = `/images/${filename}`;
+        console.log("New image detected:", imagePath);
+
+        // Send update to all clients
+        clients.forEach((res) => res.write(`data: ${imagePath}\n\n`));
+    }
+});
+
+// **SSE Route: Stream New Image Events to Frontend**
+app.get("/image-stream", (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    clients.push(res);
+
+    req.on("close", () => {
+        clients.splice(clients.indexOf(res), 1);
+    });
 });
 
 const PORT = process.env.PORT || 3000;

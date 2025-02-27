@@ -1,6 +1,6 @@
 let isRunning = false; // Tracks whether the loop is running
 let imageIteration = 0; // Tracks the latest displayed image
-let firstImageGenerated = false; // Ensures the first image is only shown after it's created
+let eventSource; // For server-sent events
 
 async function toggleReflection() {
     const promptInput = document.getElementById("initialPrompt");
@@ -26,10 +26,9 @@ async function toggleReflection() {
             logBox.innerHTML = "<p>Infinite reflection started.</p>";
             button.textContent = "Stop";
             isRunning = true;
-            firstImageGenerated = false; // Reset tracking for new start
 
-            // Start polling for images
-            pollForNewImages();
+            // Start listening for new images
+            listenForNewImages();
         } catch (error) {
             console.error("Error:", error);
             logBox.innerHTML = "<p>Error starting reflection.</p>";
@@ -43,6 +42,11 @@ async function toggleReflection() {
             logBox.innerHTML = "<p>Infinite reflection stopped.</p>";
             button.textContent = "Start";
             isRunning = false;
+
+            // Stop listening for new images
+            if (eventSource) {
+                eventSource.close();
+            }
         } catch (error) {
             console.error("Error:", error);
             logBox.innerHTML = "<p>Error stopping reflection.</p>";
@@ -50,33 +54,22 @@ async function toggleReflection() {
     }
 }
 
-// Poll for new images every 5 seconds
-async function pollForNewImages() {
+// **Listen for new images from the server using Server-Sent Events (SSE)**
+function listenForNewImages() {
     const imagesBox = document.getElementById("images");
 
-    while (isRunning) {
-        try {
-            // Construct the latest image path
-            const newImage = `/images/generated_${imageIteration}.png`;
+    eventSource = new EventSource("/image-stream");
 
-            // Check if the image exists
-            const response = await fetch(newImage, { method: "HEAD" });
+    eventSource.onmessage = function (event) {
+        const newImage = event.data;
+        console.log("New image received:", newImage);
 
-            if (response.ok) {
-                // Ensure the first image is not displayed until it's actually generated
-                if (!firstImageGenerated) {
-                    firstImageGenerated = true;
-                }
+        // Update image display
+        imagesBox.innerHTML = `<img src="${newImage}" alt="Generated Image" style="max-width: 100%; border-radius: 10px; margin-top: 10px;">`;
+    };
 
-                // Update the image container instead of appending images
-                imagesBox.innerHTML = `<img src="${newImage}" alt="Generated Image" style="max-width: 100%; border-radius: 10px; margin-top: 10px;">`;
-
-                imageIteration++; // Increment for the next image
-            }
-        } catch (error) {
-            console.error("Error fetching images:", error);
-        }
-
-        await new Promise(resolve => setTimeout(resolve, 5000)); // Wait before polling again
-    }
+    eventSource.onerror = function () {
+        console.log("Stopped listening for images.");
+        eventSource.close();
+    };
 }
